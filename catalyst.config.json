@@ -1,0 +1,13 @@
+{
+  "project": { "project_name": "velora" },
+  "functions": [
+    { "name": "ai-proxy", "lang": "node18" }
+  ],
+  "web": [
+    {
+      "name": "velora-web",
+      "build": "npm run build",
+      "dist": "dist"
+    }
+  ]
+}
