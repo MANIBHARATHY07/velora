@@ -1,6 +1,6 @@
 import { getFileStore } from './catalyst';
 
-const FOLDER_NAME = 'velora-documents';
+const FOLDER_NAME = 'velora_documents';
 
 /**
  * Upload a file to Catalyst File Store.
