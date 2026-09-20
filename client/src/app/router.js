@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from '../shared/ui/AppLayout';
 import { DashboardPage } from '../pages/DashboardPage';
 import { VehiclesPage } from '../pages/VehiclesPage';
@@ -11,7 +11,7 @@ import { SettingsPage } from '../pages/SettingsPage';
 
 export function AppRouter() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/" element={<AppLayout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
@@ -24,6 +24,6 @@ export function AppRouter() {
           <Route path="settings" element={<SettingsPage />} />
         </Route>
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }

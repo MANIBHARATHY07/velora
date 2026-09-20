@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
+  // Web Client Hosting serves the app under /app/
+  base: '/app/',
   plugins: [
     react({
       // Transform JSX in all .js files (not just .jsx)

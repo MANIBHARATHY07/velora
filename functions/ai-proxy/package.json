@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "main": "index.js",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.0",
     "zcatalyst-sdk-node": "^1.0.0"
   }
 }

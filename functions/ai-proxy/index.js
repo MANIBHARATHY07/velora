@@ -1,7 +1,6 @@
 const catalyst = require('zcatalyst-sdk-node');
-const Anthropic = require('@anthropic-ai/sdk');
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 // ─── Data Store helpers ──────────────────────────────────────────────────────
 
@@ -104,7 +103,36 @@ const TOOL_MAP = {
   getReminders, getPurchaseQuotation, getOwnershipSummary,
 };
 
-// ─── Claude tool definitions ─────────────────────────────────────────────────
+// ─── Gemini tool definitions ─────────────────────────────────────────────────
+
+async function generateWithGemini(contents, systemPrompt) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not set on the ai-proxy function');
+  }
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents,
+        tools: [{ functionDeclarations: FUNCTION_DECLARATIONS }],
+      }),
+    }
+  );
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error?.message || `Gemini request failed (${response.status})`);
+  }
+  return data.candidates?.[0]?.content?.parts || [];
+}
 
 const TOOLS = [
   { name: 'getVehicles', description: 'Get all vehicles for the user', input_schema: { type: 'object', properties: {}, required: [] } },
@@ -120,6 +148,12 @@ const TOOLS = [
   { name: 'getPurchaseQuotation', description: 'Get purchase quotation documents', input_schema: { type: 'object', properties: { vehicleId: { type: 'string' } }, required: ['vehicleId'] } },
   { name: 'getOwnershipSummary', description: 'Get a complete ownership summary for the vehicle', input_schema: { type: 'object', properties: { vehicleId: { type: 'string' } }, required: ['vehicleId'] } },
 ];
+
+const FUNCTION_DECLARATIONS = TOOLS.map(({ name, description, input_schema }) => ({
+  name,
+  description,
+  parameters: input_schema,
+}));
 
 // ─── SSE helpers ─────────────────────────────────────────────────────────────
 
@@ -186,7 +220,10 @@ Be concise and specific. When a user asks if something is covered, check the rel
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
-  const conversationMessages = messages.map((m) => ({ role: m.role, content: m.content }));
+  const contents = messages.map((message) => ({
+    role: message.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: message.content }],
+  }));
 
   try {
     let iteration = 0;
@@ -194,45 +231,38 @@ Be concise and specific. When a user asks if something is covered, check the rel
 
     while (iteration < MAX_ITERATIONS) {
       iteration++;
+      const parts = await generateWithGemini(contents, systemPrompt);
+      const calls = parts.filter((part) => part.functionCall);
 
-      const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 1024,
-        system: systemPrompt,
-        tools: TOOLS,
-        messages: conversationMessages,
-      });
+      if (calls.length) {
+        contents.push({ role: 'model', parts });
+        const responseParts = [];
 
-      if (response.stop_reason === 'tool_use') {
-        const toolResults = [];
-
-        for (const block of response.content) {
-          if (block.type !== 'tool_use') continue;
-
-          const toolFn = TOOL_MAP[block.name];
+        for (const part of calls) {
+          const call = part.functionCall;
+          const toolFn = TOOL_MAP[call.name];
           let result;
           try {
             result = toolFn
-              ? await toolFn(app, { ...block.input, userId })
-              : { error: `Unknown tool: ${block.name}` };
+              ? await toolFn(app, { ...(call.args || {}), userId })
+              : { error: `Unknown tool: ${call.name}` };
           } catch (err) {
             result = { error: err.message };
           }
-
-          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(result) });
+          responseParts.push({
+            functionResponse: {
+              name: call.name,
+              response: { result },
+            },
+          });
         }
 
-        conversationMessages.push({ role: 'assistant', content: response.content });
-        conversationMessages.push({ role: 'user', content: toolResults });
+        contents.push({ role: 'user', parts: responseParts });
         continue;
       }
 
-      for (const block of response.content) {
-        if (block.type === 'text' && block.text) {
-          writeSSE(res, { type: 'text', content: block.text });
-        }
-      }
-
+      const text = parts.map((part) => part.text).filter(Boolean).join('');
+      if (text) writeSSE(res, { type: 'text', content: text });
       writeDone(res);
       return;
     }

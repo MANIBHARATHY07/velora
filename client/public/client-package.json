@@ -1,0 +1,7 @@
+{
+  "name": "velora",
+  "version": "1.0.2",
+  "description": "Velora vehicle ownership app",
+  "homepage": "/__catalyst/auth/login",
+  "login_redirect": "index.html"
+}

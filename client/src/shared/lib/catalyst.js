@@ -1,32 +1,45 @@
 /**
- * Catalyst SDK is injected by the Catalyst platform at runtime as window.ZCatalyst.
- * When running locally outside Catalyst, a mock or the Catalyst local dev proxy handles this.
- *
- * @returns {object} Catalyst app instance
+ * Catalyst Web Client Hosting exposes the browser SDK as `window.catalyst`
+ * after catalystWebSDK.js and /__catalyst/sdk/init.js load.
+ * @returns {object}
  */
-function getApp() {
-  if (typeof window !== 'undefined' && window.ZCatalyst) {
-    return window.ZCatalyst.initialize();
+function getCatalyst() {
+  if (typeof window !== 'undefined' && window.catalyst) {
+    return window.catalyst;
   }
-  throw new Error('Catalyst SDK not available. Deploy to Zoho Catalyst or run via `catalyst serve`.');
+  throw new Error('Catalyst SDK not available. Open the Web Client Hosting URL, not Slate or Vite.');
 }
 
-/** @returns {object} */
+/** @param {object} response */
+function unwrap(response) {
+  if (response && response.content !== undefined) return response.content;
+  return response;
+}
+
+/** @returns {object} Data Store component (`catalyst.table`) */
 export function getDataStore() {
-  return getApp().datastore();
+  return getCatalyst().table;
 }
 
-/** @returns {object} */
+/** @returns {object} File Store component (`catalyst.file`) */
 export function getFileStore() {
-  return getApp().filestore();
+  return getCatalyst().file;
 }
 
 /** @returns {object} */
 export function getAuth() {
-  return getApp().auth();
+  const auth = getCatalyst().auth;
+  const signOut = auth.signOut.bind(auth);
+  return {
+    signOut: (redirectUrl) => signOut(redirectUrl || '/__catalyst/auth/login'),
+  };
 }
 
 /** @returns {Promise<object>} current Catalyst user */
 export async function getCurrentUser() {
-  return getAuth().getCurrentUser();
+  const response = await getCatalyst().auth.isUserAuthenticated();
+  const user = unwrap(response);
+  return user;
 }
+
+export { unwrap };

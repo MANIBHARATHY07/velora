@@ -1,4 +1,4 @@
-import { getDataStore } from './catalyst';
+import { getDataStore, unwrap } from './catalyst';
 
 /**
  * Maps a Catalyst row object to a plain JS object with `id` instead of `ROWID`.
@@ -6,8 +6,21 @@ import { getDataStore } from './catalyst';
  * @returns {object}
  */
 function mapRow(row) {
+  if (!row) return row;
   const { ROWID, ...rest } = row;
   return { id: String(ROWID), ...rest };
+}
+
+/**
+ * @param {object} response
+ * @returns {object[]}
+ */
+function rowsFrom(response) {
+  const content = unwrap(response);
+  if (Array.isArray(content)) return content;
+  if (Array.isArray(content?.rows)) return content.rows;
+  if (Array.isArray(content?.data)) return content.data;
+  return [];
 }
 
 export class BaseRepository {
@@ -16,8 +29,33 @@ export class BaseRepository {
     this.segmentName = segmentName;
   }
 
-  _segment() {
-    return getDataStore().segment(this.segmentName);
+  _table() {
+    return getDataStore().tableId(this.segmentName);
+  }
+
+  /**
+   * @returns {Promise<object[]>}
+   */
+  async _getAllRows() {
+    const table = this._table();
+    const rows = [];
+    let nextToken;
+    let guard = 0;
+
+    while (guard < 20) {
+      guard += 1;
+      const response = await table.getPagedRows({ next_token: nextToken, max_rows: 200 });
+      const batch = rowsFrom(response);
+      rows.push(...batch);
+
+      const content = unwrap(response) || {};
+      const more = Boolean(response?.more_records ?? content.more_records);
+      const token = response?.next_token ?? content.next_token;
+      if (!more || !token || !batch.length || token === nextToken) break;
+      nextToken = token;
+    }
+
+    return rows;
   }
 
   /**
@@ -25,8 +63,8 @@ export class BaseRepository {
    * @returns {Promise<object[]>}
    */
   async getAll(userId) {
-    const rows = await this._segment().getRows();
-    return rows.filter((r) => r.userId === userId).map(mapRow);
+    const rows = await this._getAllRows();
+    return rows.filter((r) => String(r.userId) === String(userId)).map(mapRow);
   }
 
   /**
@@ -34,8 +72,8 @@ export class BaseRepository {
    * @returns {Promise<object>}
    */
   async getById(rowId) {
-    const row = await this._segment().getRow(rowId);
-    return mapRow(row);
+    const response = await this._table().rowId(String(rowId)).get();
+    return mapRow(unwrap(response));
   }
 
   /**
@@ -45,7 +83,7 @@ export class BaseRepository {
    */
   async getByVehicleId(vehicleId, userId) {
     const all = await this.getAll(userId);
-    return all.filter((r) => r.vehicleId === vehicleId);
+    return all.filter((r) => String(r.vehicleId) === String(vehicleId));
   }
 
   /**
@@ -53,8 +91,8 @@ export class BaseRepository {
    * @returns {Promise<object>}
    */
   async create(data) {
-    const row = await this._segment().insertRow(data);
-    return mapRow(row);
+    const response = await this._table().addRow([data]);
+    return mapRow(rowsFrom(response)[0]);
   }
 
   /**
@@ -63,8 +101,8 @@ export class BaseRepository {
    * @returns {Promise<object>}
    */
   async update(rowId, data) {
-    const row = await this._segment().updateRow({ ROWID: rowId, ...data });
-    return mapRow(row);
+    const response = await this._table().updateRow([{ ...data, ROWID: rowId }]);
+    return mapRow(rowsFrom(response)[0]);
   }
 
   /**
@@ -72,6 +110,11 @@ export class BaseRepository {
    * @returns {Promise<void>}
    */
   async delete(rowId) {
-    await this._segment().deleteRow(rowId);
+    const table = this._table();
+    if (typeof table.deleteRow === 'function') {
+      await table.deleteRow(rowId);
+      return;
+    }
+    await table.rowId(String(rowId)).delete();
   }
 }

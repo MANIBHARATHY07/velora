@@ -84,7 +84,13 @@ export function VehiclesPage() {
 
   async function handleCreate(data) {
     try {
-      const v = await createVehicle.mutateAsync({ data });
+      const payload = {
+        ...data,
+        variant: data.variant || '',
+        purchasePrice: data.purchasePrice || 0,
+        odometer: data.odometer || 0,
+      };
+      const v = await createVehicle.mutateAsync(payload);
       dispatch(selectVehicle(v.id));
       setAddOpen(false);
       toast.success('Vehicle added');
