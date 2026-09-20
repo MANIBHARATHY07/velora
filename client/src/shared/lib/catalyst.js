@@ -35,6 +35,24 @@ export function getAuth() {
   };
 }
 
+/**
+ * Token for calling Advanced I/O functions from the web client.
+ * @returns {Promise<string>}
+ */
+export async function getFunctionAuthToken() {
+  const response = await getCatalyst().auth.generateAuthToken();
+  const content = unwrap(response);
+  const token =
+    response?.access_token ||
+    content?.access_token ||
+    content?.token ||
+    (typeof content === 'string' ? content : null);
+  if (!token) {
+    throw new Error('Could not generate Catalyst auth token');
+  }
+  return token;
+}
+
 /** @returns {Promise<object>} current Catalyst user */
 export async function getCurrentUser() {
   const response = await getCatalyst().auth.isUserAuthenticated();

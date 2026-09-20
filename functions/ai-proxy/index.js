@@ -1,6 +1,6 @@
 const catalyst = require('zcatalyst-sdk-node');
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
 // ─── Data Store helpers ──────────────────────────────────────────────────────
 
@@ -10,13 +10,24 @@ function mapRow(row) {
 }
 
 async function getSegment(app, name) {
-  return app.datastore().segment(name);
+  const store = app.datastore();
+  if (typeof store.table === 'function') return store.table(name);
+  return store.segment(name);
 }
 
 async function querySegment(app, segmentName, filter) {
   const seg = await getSegment(app, segmentName);
-  const rows = await seg.getRows();
-  return rows.filter(filter).map(mapRow);
+  let rows;
+  if (typeof seg.getAllRows === 'function') {
+    const result = await seg.getAllRows();
+    rows = Array.isArray(result) ? result : result?.content || [];
+  } else if (typeof seg.getPagedRows === 'function') {
+    const result = await seg.getPagedRows({ max_rows: 200 });
+    rows = Array.isArray(result) ? result : result?.content || result?.data || [];
+  } else {
+    rows = await seg.getRows();
+  }
+  return (rows || []).filter(filter).map(mapRow);
 }
 
 // ─── Tool implementations ────────────────────────────────────────────────────
@@ -166,38 +177,96 @@ function writeDone(res) {
   res.end();
 }
 
-// ─── Main handler ─────────────────────────────────────────────────────────────
-
-module.exports = async (context, req, res) => {
+function setCors(req, res) {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
+
+function sendJson(res, statusCode, payload) {
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
+    res.status(statusCode).json(payload);
+    return;
+  }
+  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(payload));
+}
+
+function readJsonBody(req) {
+  if (req.body && typeof req.body === 'object') {
+    return Promise.resolve(req.body);
+  }
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      try {
+        const raw = Buffer.concat(chunks).toString('utf8').trim();
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+async function resolveUserId(app, bodyUserId) {
+  try {
+    const userMgmt = app.userManagement();
+    const user = await (userMgmt.getCurrentUser
+      ? userMgmt.getCurrentUser()
+      : userMgmt.getCurrentProjectUser());
+    const id = String(user?.user_id || user?.id || user?.userId || '');
+    if (id && id !== 'undefined' && id !== 'null') return id;
+  } catch {
+    // Fall through — Catalyst session may not be attached to Advanced I/O.
+  }
+  const fallback = String(bodyUserId || '');
+  if (fallback && fallback !== 'undefined' && fallback !== 'null') {
+    return fallback;
+  }
+  throw new Error('Unauthorized');
+}
+
+// Advanced I/O blank template — Catalyst calls this as (req, res)
+module.exports = async (req, res) => {
+  setCors(req, res);
 
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
+    res.writeHead(200);
+    res.end();
     return;
   }
 
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' });
+    sendJson(res, 405, { error: 'Method not allowed' });
     return;
   }
 
-  const app = catalyst.initialize(req);
+  let body;
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    sendJson(res, 400, { error: 'Invalid JSON body' });
+    return;
+  }
+
+  // Admin scope so Data Store tools work even when user session is not forwarded.
+  const app = catalyst.initialize(req, { scope: 'admin' });
 
   let userId;
   try {
-    const user = await app.auth().getCurrentUser();
-    userId = String(user.user_id || user.id || user.userId);
+    userId = await resolveUserId(app, body.userId);
   } catch {
-    res.status(401).json({ error: 'Unauthorized' });
+    sendJson(res, 401, { error: 'Unauthorized' });
     return;
   }
 
-  const { messages = [], vehicleId } = req.body;
+  const { messages = [], vehicleId } = body;
   if (!vehicleId) {
-    res.status(400).json({ error: 'vehicleId required' });
+    sendJson(res, 400, { error: 'vehicleId required' });
     return;
   }
 
@@ -219,6 +288,7 @@ Be concise and specific. When a user asks if something is covered, check the rel
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
   const contents = messages.map((message) => ({
     role: message.role === 'assistant' ? 'model' : 'user',

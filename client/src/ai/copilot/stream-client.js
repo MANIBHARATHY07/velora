@@ -1,15 +1,26 @@
+import { getFunctionAuthToken } from '../../shared/lib/catalyst';
+
 /**
- * @param {{ messages: object[], vehicleId: string, onChunk: (text: string) => void, onDone: () => void, onError: (err: Error) => void }} opts
+ * @param {{ messages: object[], vehicleId: string, userId: string, onChunk: (text: string) => void, onDone: () => void, onError: (err: Error) => void }} opts
  */
-export async function sendMessage({ messages, vehicleId, onChunk, onDone, onError }) {
+export async function sendMessage({ messages, vehicleId, userId, onChunk, onDone, onError }) {
   try {
+    const headers = {
+      'Content-Type': 'application/json',
+    };
+
+    try {
+      const token = await getFunctionAuthToken();
+      headers.Authorization = token;
+    } catch {
+      // Cookie session may still work; userId is sent as fallback.
+    }
+
     const response = await fetch('/server/ai-proxy/chat', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       credentials: 'include',
-      body: JSON.stringify({ messages, vehicleId }),
+      body: JSON.stringify({ messages, vehicleId, userId }),
     });
 
     if (!response.ok) {

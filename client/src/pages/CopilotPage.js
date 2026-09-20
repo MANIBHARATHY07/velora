@@ -13,6 +13,7 @@ export function CopilotPage() {
   const dispatch = useDispatch();
   const { messages, isStreaming, selectedVehicleId } = useSelector((s) => s.chat);
   const globalSelectedVehicleId = useSelector((s) => s.vehicle.selectedVehicleId);
+  const userId = useSelector((s) => s.settings.userId);
   const { data: vehicles = [] } = useVehicles();
 
   const [input, setInput] = useState('');
@@ -46,6 +47,7 @@ export function CopilotPage() {
     await sendMessage({
       messages: history,
       vehicleId,
+      userId,
       onChunk: (chunk) => {
         accumulated += chunk;
         dispatch(updateLastMessage(accumulated));
